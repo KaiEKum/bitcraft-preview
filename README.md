@@ -174,6 +174,7 @@ These labels can also be changed directly from the tray menu.
 - No windows found: verify that the BitCraft process is still named `BitCraft.exe`.
 - Blank or black thumbnails: DWM thumbnails can fail in some fullscreen or overlay-heavy configurations. Borderless or windowed mode is usually more reliable.
 - Native restart still leaves stale profile folders: check `%LOCALAPPDATA%\BitCraftPreview\bitcraft_preview.log` for profile-unload wait warnings.
+- Native launch fails with `[WinError 1327] Account restrictions are preventing this user from signing in`: run `Native Repair...` from the tray tools menu as Administrator. Repair resets app-managed `bitcraft1`, `bitcraft2`, ... passwords, marks them as non-expiring, and updates encrypted config. This usually means the local Windows password policy expired the managed account passwords.
 - Tray shows `Restart` instead of `Launch`: BitCraft Preview detected `steam.exe` or `BitCraft.exe` already running for that native account.
 - Migrating from older builds: if you previously had a `config.json` next to the executable, move it to `%LOCALAPPDATA%\BitCraftPreview\config.json`.
 

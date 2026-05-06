@@ -63,6 +63,21 @@ def _run_native_cli(args) -> None:
             )
             return
 
+        if args.native_repair:
+            if not args.native_ack_user_changes:
+                print(setup_disclaimer_text())
+                print("\nRepair aborted. Re-run with --native-ack-user-changes to continue.")
+                raise SystemExit(2)
+
+            service = NativeSetupService()
+            summary = service.repair()
+            print(
+                "Native repair complete:",
+                f"users_repaired={summary.users_repaired}",
+                f"users_failed={summary.users_failed}",
+            )
+            return
+
         controller = NativeProcessController()
         if args.native_launch:
             result = controller.launch_instance(args.native_launch)
@@ -120,11 +135,12 @@ def main():
     )
     parser.add_argument("--native-setup", dest="native_setup", type=int, help="Reconcile and provision native setup for N instances")
     parser.add_argument("--native-cleanup", dest="native_cleanup", action="store_true", help="Cleanup app-managed native users/folders")
+    parser.add_argument("--native-repair", dest="native_repair", action="store_true", help="Repair app-managed native users and rotate stored passwords")
     parser.add_argument(
         "--native-ack-user-changes",
         dest="native_ack_user_changes",
         action="store_true",
-        help="Acknowledge Windows user account modifications for native setup/cleanup",
+        help="Acknowledge Windows user account modifications for native setup/repair/cleanup",
     )
     args = parser.parse_args()
 
@@ -135,6 +151,7 @@ def main():
         or args.native_relogin
         or args.native_setup is not None
         or args.native_cleanup
+        or args.native_repair
     )
     if native_request:
         _run_native_cli(args)
@@ -600,6 +617,43 @@ def main():
             logger.exception("Unexpected tray native cleanup error")
             QMessageBox.critical(None, "Native Cleanup Error", str(e))
 
+    def _run_native_repair_from_tray() -> None:
+        if not _require_native_admin("repair"):
+            return
+
+        if not _confirm_native_account_changes("Native repair"):
+            return
+
+        confirm = QMessageBox.warning(
+            None,
+            "Confirm Native Repair",
+            (
+                "This will reset passwords for app-managed local Windows users "
+                "(bitcraft1, bitcraft2, ...), mark them as non-expiring, and update encrypted config.\n\n"
+                "Continue?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            summary = NativeSetupService().repair()
+            message = (
+                "Native repair complete.\n"
+                f"users_repaired={summary.users_repaired}, users_failed={summary.users_failed}"
+            )
+            logger.info(message)
+            QMessageBox.information(None, "Native Repair Complete", message)
+            _refresh_overlay_and_tray_labels()
+        except NativeSetupError as e:
+            logger.error("Native repair failed from tray: %s", e)
+            QMessageBox.critical(None, "Native Repair Error", str(e))
+        except Exception as e:
+            logger.exception("Unexpected tray native repair error")
+            QMessageBox.critical(None, "Native Repair Error", str(e))
+
     _update_tray_action = QAction("", tray_menu)
     _update_tray_action.setVisible(False)
     _update_tray_action.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(GITHUB_RELEASES_PAGE)))
@@ -622,6 +676,10 @@ def main():
     native_setup_action = QAction("Native Setup...", app)
     native_setup_action.triggered.connect(_run_native_setup_from_tray)
     tools_menu.addAction(native_setup_action)
+
+    native_repair_action = QAction("Native Repair...", app)
+    native_repair_action.triggered.connect(_run_native_repair_from_tray)
+    tools_menu.addAction(native_repair_action)
 
     native_cleanup_action = QAction("Native Cleanup...", app)
     native_cleanup_action.triggered.connect(_run_native_cleanup_from_tray)
