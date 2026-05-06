@@ -244,7 +244,7 @@ class NativeSetupService:
         for instance in instances:
             password = LocalUserManager.generate_password()
             try:
-                self._users.repair_user(instance.local_username, password)
+                self._users.reset_password(instance.local_username, password)
                 sid = self._users.get_user_sid(instance.local_username)
                 self._state.upsert_instance(
                     instance_id=instance.instance_id,
@@ -253,6 +253,7 @@ class NativeSetupService:
                     local_user_sid=sid,
                     status="ready",
                 )
+                self._users.harden_user(instance.local_username)
                 summary.users_repaired += 1
             except Exception as e:
                 summary.users_failed += 1

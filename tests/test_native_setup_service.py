@@ -15,6 +15,7 @@ class _FakeUserManager:
         self.deleted = []
         self.hardened = []
         self.repaired = []
+        self.reset = []
 
     def ensure_user(self, username: str, password: str | None = None):
         if username in self._created:
@@ -27,6 +28,9 @@ class _FakeUserManager:
 
     def harden_user(self, username: str) -> None:
         self.hardened.append(username)
+
+    def reset_password(self, username: str, password: str) -> None:
+        self.reset.append((username, password))
 
     def repair_user(self, username: str, password: str) -> None:
         self.repaired.append((username, password))
@@ -124,9 +128,41 @@ class NativeSetupServiceTests(unittest.TestCase):
 
             self.assertEqual(summary.users_repaired, 1)
             self.assertEqual(summary.users_failed, 0)
-            self.assertEqual(users.repaired, [("bitcraft1", "newpw")])
+            self.assertEqual(users.reset, [("bitcraft1", "newpw")])
+            self.assertEqual(users.hardened, ["bitcraft1"])
             self.assertEqual(manager.get_plain_password("steam1"), "newpw")
             self.assertEqual(manager.get_instance("steam1").local_user_sid, "S-1-5-21-bitcraft1")
+
+    def test_repair_persists_new_password_before_harden_failure(self) -> None:
+        class _FailingHardenUserManager(_FakeUserManager):
+            def harden_user(self, username: str) -> None:
+                super().harden_user(username)
+                raise RuntimeError("hardening failed")
+
+        manager = self._state()
+        users = _FailingHardenUserManager()
+        service = NativeSetupService(state=manager, user_manager=users)
+
+        with patch("bitcraft_preview.native.state_manager.protect_text", side_effect=lambda p, **_: f"ENC:{p}"), patch(
+            "bitcraft_preview.native.state_manager.unprotect_text", side_effect=lambda c: c.replace("ENC:", "", 1)
+        ):
+            manager.upsert_instance(
+                instance_id="steam1",
+                local_username="bitcraft1",
+                plain_password="oldpw",
+                instance_root=os.path.join(self._base_root, "Steam1"),
+                steam_exe_path=os.path.join(self._base_root, "Steam1", "steam.exe"),
+            )
+
+            with patch("bitcraft_preview.native.setup_service.is_admin", return_value=True), patch(
+                "bitcraft_preview.native.setup_service.LocalUserManager.generate_password", return_value="newpw"
+            ):
+                with self.assertRaisesRegex(Exception, "hardening failed"):
+                    service.repair()
+
+            self.assertEqual(users.reset, [("bitcraft1", "newpw")])
+            self.assertEqual(users.hardened, ["bitcraft1"])
+            self.assertEqual(manager.get_plain_password("steam1"), "newpw")
 
     def test_cleanup_resets_native_state_and_deletes_managed_folders(self) -> None:
         manager = self._state()

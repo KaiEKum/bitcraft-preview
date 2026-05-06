@@ -169,7 +169,7 @@ class LocalUserManager:
             detail = stderr or stdout or f"exit code {result.returncode}"
             raise LocalUserError(f"Failed to set non-expiring password for {username}: {detail}")
 
-    def repair_user(self, username: str, password: str) -> None:
+    def reset_password(self, username: str, password: str) -> None:
         if not self.user_exists(username):
             raise LocalUserError(f"User does not exist: {username}")
 
@@ -180,6 +180,8 @@ class LocalUserManager:
             detail = stderr or stdout or f"exit code {result.returncode}"
             raise LocalUserError(f"Failed to reset password for {username}: {detail}")
 
+    def repair_user(self, username: str, password: str) -> None:
+        self.reset_password(username, password)
         self.harden_user(username)
 
     def delete_user(self, username: str) -> None:

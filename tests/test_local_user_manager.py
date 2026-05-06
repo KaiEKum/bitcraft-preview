@@ -76,6 +76,17 @@ class LocalUserManagerTests(unittest.TestCase):
         run_mock.assert_called_once_with(["net", "user", "bitcraft1", "newpw"])
         harden_mock.assert_called_once_with("bitcraft1")
 
+    def test_reset_password_does_not_harden_account(self) -> None:
+        mgr = LocalUserManager()
+        with patch.object(mgr, "user_exists", return_value=True), patch(
+            "bitcraft_preview.native.local_user_manager._run_command",
+            return_value=_cp(0),
+        ) as run_mock, patch.object(mgr, "harden_user") as harden_mock:
+            mgr.reset_password("bitcraft1", "newpw")
+
+        run_mock.assert_called_once_with(["net", "user", "bitcraft1", "newpw"])
+        harden_mock.assert_not_called()
+
     def test_harden_user_sets_non_expiring_enabled_account(self) -> None:
         mgr = LocalUserManager()
         with patch.object(mgr, "user_exists", return_value=True), patch(
