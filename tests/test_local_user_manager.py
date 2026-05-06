@@ -31,9 +31,10 @@ class LocalUserManagerTests(unittest.TestCase):
         with patch.object(mgr, "user_exists", return_value=False), patch(
             "bitcraft_preview.native.local_user_manager._run_command",
             side_effect=[_cp(0), _cp(0)],
-        ):
+        ), patch.object(mgr, "harden_user") as harden_mock:
             result = mgr.create_user("bitcraft1", "pw")
         self.assertEqual(result, "pw")
+        harden_mock.assert_called_once_with("bitcraft1")
 
     def test_create_user_failure_raises(self) -> None:
         mgr = LocalUserManager()
@@ -49,9 +50,36 @@ class LocalUserManagerTests(unittest.TestCase):
         with patch.object(mgr, "user_exists", return_value=False), patch(
             "bitcraft_preview.native.local_user_manager._run_command",
             return_value=_cp(1, stderr="No valid response was provided."),
-        ), patch("bitcraft_preview.native.local_user_manager._create_user_with_powershell", return_value=_cp(0)):
+        ), patch("bitcraft_preview.native.local_user_manager._create_user_with_powershell", return_value=_cp(0)), patch.object(
+            mgr, "harden_user"
+        ) as harden_mock:
             result = mgr.create_user("bitcraft1", "pw")
         self.assertEqual(result, "pw")
+        harden_mock.assert_called_once_with("bitcraft1")
+
+    def test_repair_user_resets_password_and_hardens_account(self) -> None:
+        mgr = LocalUserManager()
+        with patch.object(mgr, "user_exists", return_value=True), patch(
+            "bitcraft_preview.native.local_user_manager._run_command",
+            return_value=_cp(0),
+        ) as run_mock, patch.object(mgr, "harden_user") as harden_mock:
+            mgr.repair_user("bitcraft1", "newpw")
+
+        run_mock.assert_called_once_with(["net", "user", "bitcraft1", "newpw"])
+        harden_mock.assert_called_once_with("bitcraft1")
+
+    def test_harden_user_sets_non_expiring_enabled_account(self) -> None:
+        mgr = LocalUserManager()
+        with patch.object(mgr, "user_exists", return_value=True), patch(
+            "bitcraft_preview.native.local_user_manager._run_command",
+            return_value=_cp(0),
+        ) as run_mock, patch("bitcraft_preview.native.local_user_manager._harden_user_with_powershell", return_value=_cp(0)):
+            mgr.harden_user("bitcraft1")
+
+        calls = [call.args[0] for call in run_mock.call_args_list]
+        self.assertIn(["net", "user", "bitcraft1", "/active:yes"], calls)
+        self.assertIn(["net", "user", "bitcraft1", "/expires:never"], calls)
+        self.assertIn(["net", "user", "bitcraft1", "/times:all"], calls)
 
     def test_get_user_sid(self) -> None:
         mgr = LocalUserManager()

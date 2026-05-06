@@ -5,7 +5,9 @@ from ctypes import wintypes
 
 
 class ProcessLaunchError(RuntimeError):
-    pass
+    def __init__(self, message: str, winerror: int | None = None) -> None:
+        super().__init__(message)
+        self.winerror = winerror
 
 
 LOGON_WITH_PROFILE = 0x00000001
@@ -86,7 +88,8 @@ class ProcessLauncher:
             ctypes.byref(process_info),
         )
         if not ok:
-            raise ProcessLaunchError(str(ctypes.WinError()))
+            error = ctypes.WinError()
+            raise ProcessLaunchError(str(error), getattr(error, "winerror", None))
 
         try:
             return int(process_info.dwProcessId)

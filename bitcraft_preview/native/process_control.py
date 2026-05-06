@@ -10,12 +10,14 @@ from typing import List
 
 import psutil
 
-from .process_launcher import ProcessLauncher
+from .process_launcher import ProcessLaunchError, ProcessLauncher
 from .state_manager import NativeInstance, NativeModeStateManager
 
 logger = logging.getLogger(__name__)
 
 APP_ID_BITCRAFT = 3454650
+
+ERROR_ACCOUNT_RESTRICTION = 1327
 
 
 def _wait_for_profile_unloaded(sid: str, timeout: float = 15.0) -> None:
@@ -231,6 +233,16 @@ class NativeProcessController:
         safe = re.sub(r"[^a-zA-Z0-9]", "", instance_id) or "steam"
         return f"steam{safe}"
 
+    @staticmethod
+    def _friendly_launch_error(instance: NativeInstance, error: ProcessLaunchError) -> NativeProcessControlError:
+        if error.winerror == ERROR_ACCOUNT_RESTRICTION or "WinError 1327" in str(error):
+            return NativeProcessControlError(
+                f"Windows rejected native account '{instance.local_username}' for {instance.instance_id}. "
+                "The password or account policy is likely expired/restricted. "
+                "Run Native Repair as Administrator, then launch again."
+            )
+        return NativeProcessControlError(str(error))
+
     def _launch(
         self,
         instance: NativeInstance,
@@ -264,22 +276,28 @@ class NativeProcessController:
         )
         if userchooser_mode:
             args = f"-master_ipc_name_override {override} -userchooser"
-            steam_pid = self._launcher.launch_foreground(
-                username=instance.local_username,
-                password=password,
-                exe_path=instance.steam_exe_path,
-                args=args,
-                working_directory=working_dir,
-            )
+            try:
+                steam_pid = self._launcher.launch_foreground(
+                    username=instance.local_username,
+                    password=password,
+                    exe_path=instance.steam_exe_path,
+                    args=args,
+                    working_directory=working_dir,
+                )
+            except ProcessLaunchError as e:
+                raise self._friendly_launch_error(instance, e) from e
         else:
             args = f"-master_ipc_name_override {override} -silent -applaunch {APP_ID_BITCRAFT}"
-            steam_pid = self._launcher.launch_silent(
-                username=instance.local_username,
-                password=password,
-                exe_path=instance.steam_exe_path,
-                args=args,
-                working_directory=working_dir,
-            )
+            try:
+                steam_pid = self._launcher.launch_silent(
+                    username=instance.local_username,
+                    password=password,
+                    exe_path=instance.steam_exe_path,
+                    args=args,
+                    working_directory=working_dir,
+                )
+            except ProcessLaunchError as e:
+                raise self._friendly_launch_error(instance, e) from e
 
         logger.debug("Steam launched: instance=%s steam_pid=%d", instance.instance_id, steam_pid)
         return LaunchResult(

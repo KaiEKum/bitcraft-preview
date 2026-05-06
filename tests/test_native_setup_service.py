@@ -13,6 +13,8 @@ class _FakeUserManager:
     def __init__(self) -> None:
         self._created = set()
         self.deleted = []
+        self.hardened = []
+        self.repaired = []
 
     def ensure_user(self, username: str, password: str | None = None):
         if username in self._created:
@@ -22,6 +24,12 @@ class _FakeUserManager:
 
     def get_user_sid(self, username: str) -> str:
         return f"S-1-5-21-{username}"
+
+    def harden_user(self, username: str) -> None:
+        self.hardened.append(username)
+
+    def repair_user(self, username: str, password: str) -> None:
+        self.repaired.append((username, password))
 
     def delete_user(self, username: str) -> None:
         self.deleted.append(username)
@@ -76,6 +84,7 @@ class NativeSetupServiceTests(unittest.TestCase):
 
         self.assertEqual(first.users_created, 2)
         self.assertEqual(first.users_reused, 0)
+        self.assertEqual(users.hardened, ["bitcraft1", "bitcraft2"])
         self.assertEqual(len(manager.list_instances()), 2)
 
         with patch("bitcraft_preview.native.setup_service.is_admin", return_value=True), patch(
@@ -89,7 +98,35 @@ class NativeSetupServiceTests(unittest.TestCase):
 
         self.assertEqual(second.users_created, 0)
         self.assertEqual(second.users_reused, 2)
+        self.assertEqual(users.hardened, ["bitcraft1", "bitcraft2", "bitcraft1", "bitcraft2"])
         self.assertEqual(len(manager.list_instances()), 2)
+
+    def test_repair_rotates_passwords_and_updates_state(self) -> None:
+        manager = self._state()
+        users = _FakeUserManager()
+        service = NativeSetupService(state=manager, user_manager=users)
+
+        with patch("bitcraft_preview.native.state_manager.protect_text", side_effect=lambda p, **_: f"ENC:{p}"), patch(
+            "bitcraft_preview.native.state_manager.unprotect_text", side_effect=lambda c: c.replace("ENC:", "", 1)
+        ):
+            manager.upsert_instance(
+                instance_id="steam1",
+                local_username="bitcraft1",
+                plain_password="oldpw",
+                instance_root=os.path.join(self._base_root, "Steam1"),
+                steam_exe_path=os.path.join(self._base_root, "Steam1", "steam.exe"),
+            )
+
+            with patch("bitcraft_preview.native.setup_service.is_admin", return_value=True), patch(
+                "bitcraft_preview.native.setup_service.LocalUserManager.generate_password", return_value="newpw"
+            ):
+                summary = service.repair()
+
+            self.assertEqual(summary.users_repaired, 1)
+            self.assertEqual(summary.users_failed, 0)
+            self.assertEqual(users.repaired, [("bitcraft1", "newpw")])
+            self.assertEqual(manager.get_plain_password("steam1"), "newpw")
+            self.assertEqual(manager.get_instance("steam1").local_user_sid, "S-1-5-21-bitcraft1")
 
     def test_cleanup_resets_native_state_and_deletes_managed_folders(self) -> None:
         manager = self._state()

@@ -44,6 +44,16 @@ def _create_user_with_powershell(username: str, password: str) -> subprocess.Com
     return _run_command(["powershell", "-NoProfile", "-NonInteractive", "-Command", command])
 
 
+def _harden_user_with_powershell(username: str) -> subprocess.CompletedProcess[str]:
+    escaped_user = username.replace("'", "''")
+    command = (
+        f"Set-LocalUser -Name '{escaped_user}' -AccountNeverExpires "
+        f"-PasswordNeverExpires $true -UserMayChangePassword $false; "
+        f"Add-LocalGroupMember -SID 'S-1-5-32-545' -Member '{escaped_user}' -ErrorAction SilentlyContinue"
+    )
+    return _run_command(["powershell", "-NoProfile", "-NonInteractive", "-Command", command])
+
+
 def _lookup_account_sid(account_name: str) -> str:
     name = account_name
 
@@ -113,6 +123,7 @@ class LocalUserManager:
             # Some environments return "No valid response was provided." from net.exe.
             fallback = _create_user_with_powershell(username, final_password)
             if fallback.returncode == 0:
+                self.harden_user(username)
                 return final_password
 
             stderr = (result.stderr or "").strip()
@@ -130,8 +141,47 @@ class LocalUserManager:
         # Note: net.exe doesn't support SID directly, but Users should exist on all Windows installs.
         # If this fails on non-English Windows, the PowerShell fallback above will handle it.
         _run_command(["net", "localgroup", "Users", username, "/add"])
+        self.harden_user(username)
 
         return final_password
+
+    def harden_user(self, username: str) -> None:
+        if not self.user_exists(username):
+            raise LocalUserError(f"User does not exist: {username}")
+
+        commands = [
+            ["net", "user", username, "/active:yes"],
+            ["net", "user", username, "/expires:never"],
+            ["net", "user", username, "/times:all"],
+        ]
+        for args in commands:
+            result = _run_command(args)
+            if result.returncode != 0:
+                stderr = (result.stderr or "").strip()
+                stdout = (result.stdout or "").strip()
+                detail = stderr or stdout or f"exit code {result.returncode}"
+                raise LocalUserError(f"Failed to harden user {username}: {detail}")
+
+        _run_command(["net", "localgroup", "Users", username, "/add"])
+        result = _harden_user_with_powershell(username)
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            stdout = (result.stdout or "").strip()
+            detail = stderr or stdout or f"exit code {result.returncode}"
+            raise LocalUserError(f"Failed to set non-expiring password for {username}: {detail}")
+
+    def repair_user(self, username: str, password: str) -> None:
+        if not self.user_exists(username):
+            raise LocalUserError(f"User does not exist: {username}")
+
+        result = _run_command(["net", "user", username, password])
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            stdout = (result.stdout or "").strip()
+            detail = stderr or stdout or f"exit code {result.returncode}"
+            raise LocalUserError(f"Failed to reset password for {username}: {detail}")
+
+        self.harden_user(username)
 
     def delete_user(self, username: str) -> None:
         if not self.user_exists(username):

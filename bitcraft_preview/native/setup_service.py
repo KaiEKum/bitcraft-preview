@@ -26,6 +26,12 @@ class CleanupSummary:
     folders_failed: int = 0
 
 
+@dataclass
+class RepairSummary:
+    users_repaired: int = 0
+    users_failed: int = 0
+
+
 def is_admin() -> bool:
     """Check if the current process has administrator privileges."""
     try:
@@ -180,6 +186,7 @@ class NativeSetupService:
                     f"No managed password available for existing user '{username}'. "
                     "Reset password manually and rerun setup."
                 )
+            self._users.harden_user(username)
 
             if os.path.isdir(instance_root):
                 summary.folders_reused += 1
@@ -219,6 +226,41 @@ class NativeSetupService:
         cfg["mode"] = "native"
         self._state.save_config(cfg)
         self._state.set_last_reconcile(summary)
+        return summary
+
+    def repair(self) -> RepairSummary:
+        if not is_admin():
+            raise NativeSetupError(
+                "Native Mode repair requires Administrator privileges. "
+                "Please run BitCraftPreview.exe as Administrator."
+            )
+
+        instances = [instance for instance in self._state.list_instances() if instance.managed_by_app and instance.local_username]
+        if not instances:
+            raise NativeSetupError("No managed native accounts configured.")
+
+        summary = RepairSummary()
+        failures: list[str] = []
+        for instance in instances:
+            password = LocalUserManager.generate_password()
+            try:
+                self._users.repair_user(instance.local_username, password)
+                sid = self._users.get_user_sid(instance.local_username)
+                self._state.upsert_instance(
+                    instance_id=instance.instance_id,
+                    local_username=instance.local_username,
+                    plain_password=password,
+                    local_user_sid=sid,
+                    status="ready",
+                )
+                summary.users_repaired += 1
+            except Exception as e:
+                summary.users_failed += 1
+                failures.append(f"{instance.instance_id} ({instance.local_username}): {e}")
+
+        if failures:
+            raise NativeSetupError("Native repair failed for some accounts:\n" + "\n".join(failures))
+
         return summary
 
     def cleanup(self) -> CleanupSummary:

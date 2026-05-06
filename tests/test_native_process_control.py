@@ -1,7 +1,8 @@
 import unittest
 from unittest.mock import patch
 
-from bitcraft_preview.native.process_control import NativeProcessController
+from bitcraft_preview.native.process_control import NativeProcessControlError, NativeProcessController
+from bitcraft_preview.native.process_launcher import ProcessLaunchError
 from bitcraft_preview.native.state_manager import NativeInstance
 
 
@@ -78,6 +79,14 @@ class _FakeLauncher:
         return 2222
 
 
+class _FailingLauncher:
+    def launch_silent(self, **kwargs):
+        raise ProcessLaunchError("[WinError 1327] Account restrictions are preventing this user from signing in", 1327)
+
+    def launch_foreground(self, **kwargs):
+        raise AssertionError("not used")
+
+
 class NativeProcessControlTests(unittest.TestCase):
     def test_is_instance_running_true_for_matching_user_and_process_name(self) -> None:
         controller = NativeProcessController(state=_FakeState())
@@ -116,6 +125,16 @@ class NativeProcessControlTests(unittest.TestCase):
         self.assertIn("-silent", kwargs["args"])
         self.assertIn("-applaunch 3454650", kwargs["args"])
         self.assertNotIn("-userchooser", kwargs["args"])
+
+    def test_launch_instance_explains_account_restriction(self) -> None:
+        controller = NativeProcessController(state=_FakeState(), launcher=_FailingLauncher())
+
+        with self.assertRaises(NativeProcessControlError) as raised:
+            controller.launch_instance("steam1")
+
+        message = str(raised.exception)
+        self.assertIn("Native Repair", message)
+        self.assertIn("bitcraft1", message)
 
     def test_open_user_chooser_uses_foreground_userchooser_flow(self) -> None:
         launcher = _FakeLauncher()
