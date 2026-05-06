@@ -20,6 +20,14 @@ class LocalUserManagerTests(unittest.TestCase):
         with patch("bitcraft_preview.native.local_user_manager._run_command", return_value=_cp(2)):
             self.assertFalse(mgr.user_exists("missing"))
 
+    def test_run_command_replaces_undecodable_output(self) -> None:
+        with patch("bitcraft_preview.native.local_user_manager.subprocess.run", return_value=_cp(0)) as run_mock:
+            from bitcraft_preview.native.local_user_manager import _run_command
+
+            _run_command(["net", "user", "bitcraft1"])
+
+        self.assertEqual(run_mock.call_args.kwargs["errors"], "replace")
+
     def test_create_user_raises_if_exists(self) -> None:
         mgr = LocalUserManager()
         with patch.object(mgr, "user_exists", return_value=True):
@@ -80,6 +88,17 @@ class LocalUserManagerTests(unittest.TestCase):
         self.assertIn(["net", "user", "bitcraft1", "/active:yes"], calls)
         self.assertIn(["net", "user", "bitcraft1", "/expires:never"], calls)
         self.assertIn(["net", "user", "bitcraft1", "/times:all"], calls)
+
+    def test_powershell_harden_only_sets_local_user_flags(self) -> None:
+        from bitcraft_preview.native.local_user_manager import _harden_user_with_powershell
+
+        with patch("bitcraft_preview.native.local_user_manager._run_command", return_value=_cp(0)) as run_mock:
+            _harden_user_with_powershell("bitcraft1")
+
+        command = run_mock.call_args.args[0][-1]
+        self.assertIn("Set-LocalUser", command)
+        self.assertIn("-PasswordNeverExpires $true", command)
+        self.assertNotIn("Add-LocalGroupMember", command)
 
     def test_get_user_sid(self) -> None:
         mgr = LocalUserManager()

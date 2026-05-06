@@ -18,7 +18,7 @@ kernel32 = ctypes.windll.kernel32
 
 
 def _run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, check=False, capture_output=True, text=True)
+    return subprocess.run(args, check=False, capture_output=True, text=True, errors="replace")
 
 
 def _generate_password(length: int = 14) -> str:
@@ -48,8 +48,7 @@ def _harden_user_with_powershell(username: str) -> subprocess.CompletedProcess[s
     escaped_user = username.replace("'", "''")
     command = (
         f"Set-LocalUser -Name '{escaped_user}' -AccountNeverExpires "
-        f"-PasswordNeverExpires $true -UserMayChangePassword $false; "
-        f"Add-LocalGroupMember -SID 'S-1-5-32-545' -Member '{escaped_user}' -ErrorAction SilentlyContinue"
+        f"-PasswordNeverExpires $true -UserMayChangePassword $false"
     )
     return _run_command(["powershell", "-NoProfile", "-NonInteractive", "-Command", command])
 
